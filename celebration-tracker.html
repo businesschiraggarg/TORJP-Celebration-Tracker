@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="Rajvilās Celebrations"/>
+  <title>The Oberoi Rajvilās — Celebration Tracker</title>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+    body{background:#F2EEE3;font-family:'Inter',sans-serif;}
+    select,input,textarea{font-family:'Inter',sans-serif;-webkit-appearance:none;}
+    ::-webkit-scrollbar{display:none;}
+    .scrollx{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+// ── PASTE YOUR APPS SCRIPT URL HERE AFTER DEPLOYING ──────────────────────────
+const SCRIPT_URL = "PASTE_YOUR_URL_HERE";
+// ─────────────────────────────────────────────────────────────────────────────
+
+const today = new Date();
+const fmt = (d) => d instanceof Date ? d.toISOString().split("T")[0] : d;
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+
+const CELEBRATIONS   = ["Birthday","Anniversary","Wedding","Honeymoon","Restaurant Celebration","Other"];
+const isActive = (g) => new Date(g.checkOut) >= new Date(fmt(today));
+
+const C = {
+  gold:"#D9BF61", goldDark:"#B89D3E", navy:"#1E2A6E", navyDark:"#141C4E", navyLight:"#2A3A8E",
+  white:"#FFFFFF", ivory:"#FAF8F2", textDark:"#111111", textMid:"#444444", textSoft:"#888888",
+  green:"#1A7A4A", greenBg:"#E8F5EE", greenBorder:"#A8D5BC",
+  red:"#B83030", redBg:"#FDEAEA", redBorder:"#E8A0A0",
+  amber:"#C47A00", amberBg:"#FFF4DC", amberBorder:"#E8CC80",
+  purple:"#5B3FAE", purpleBg:"#F0EAFB", purpleBorder:"#C4AEE8",
+  border:"#E8E2D0", cardBg:"#FFFFFF", pageBg:"#F2EEE3",
+};
+
+const GoldDot = ({color}) => <span style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:color,marginRight:5,flexShrink:0}}/>;
+
+async function apiGet() {
+  const res = await fetch(`${SCRIPT_URL}?t=${Date.now()}`);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data.guests;
+}
+async function apiPost(action, payload) {
+  const res = await fetch(SCRIPT_URL, {method:"POST", body:JSON.stringify({action,...payload})});
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
+function App() {
+  const [guests,setGuests]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [syncing,setSyncing]=useState(false);
+  const [view,setView]=useState("dashboard");
+  const [selectedGuest,setSelectedGuest]=useState(null);
+  const [filterCelebration,setFilterCelebration]=useState("All");
+  const [filterStatus,setFilterStatus]=useState("All");
+  const [toast,setToast]=useState(null);
+  const [showAddForm,setShowAddForm]=useState(false);
+  const [newGuest,setNewGuest]=useState({
+    name:"",room:"",checkIn:fmt(today),checkOut:fmt(addDays(today,3)),
+    celebration:"Birthday",status:"Pending",
+    restaurantCelebration:false,restaurantNotes:"",
+    poolsideDinner:false,poolsideDinnerNotes:"",
+    specialTable:false,specialTableNotes:"",
+    notes:""
+  });
+
+  const showToast=(msg,type="success")=>{setToast({msg,type});setTimeout(()=>setToast(null),3500);};
+
+  const loadGuests=useCallback(async()=>{
+    try{const data=await apiGet();setGuests(data);}
+    catch{showToast("Could not reach Google Sheets","error");}
+    finally{setLoading(false);}
+  },[]);
+
+  useEffect(()=>{loadGuests();},[loadGuests]);
+
+  const refresh=async()=>{setSyncing(true);await loadGuests();setSyncing(false);showToast("Synced with Google Sheets");};
+
+  const addGuest=async()=>{
+    if(!newGuest.name||!newGuest.room){showToast("Name and room are required","error");return;}
+    setSyncing(true);
+    try{
+      const {id}=await apiPost("ADD",{guest:newGuest});
+      setGuests(gs=>[...gs,{...newGuest,id}]);
+      const name=newGuest.name;
+      setShowAddForm(false);
+      setNewGuest({name:"",room:"",checkIn:fmt(today),checkOut:fmt(addDays(today,3)),celebration:"Birthday",status:"Pending",restaurantCelebration:false,restaurantNotes:"",poolsideDinner:false,poolsideDinnerNotes:"",specialTable:false,specialTableNotes:"",notes:""});
+      showToast(`${name} added`);
+    }catch{showToast("Failed to save","error");}
+    finally{setSyncing(false);}
+  };
+
+  const updateGuest=async(id,fields)=>{
+    const updated=guests.map(g=>g.id===id?{...g,...fields}:g);
+    setGuests(updated);
+    if(selectedGuest?.id===id)setSelectedGuest(g=>({...g,...fields}));
+    try{const full=updated.find(g=>g.id===id);await apiPost("UPDATE",{guest:full});}
+    catch{showToast("Sync failed","error");}
+  };
+
+  const updateStatus=(id,status)=>{updateGuest(id,{status});showToast(`Marked as ${status}`);};
+
+  const activeGuests=guests.filter(isActive);
+  const pending=activeGuests.filter(g=>g.status==="Pending");
+  const done=guests.filter(g=>g.status==="Done");
+  const poolsideCount=guests.filter(g=>g.poolsideDinner).length;
+  const specialTableCount=guests.filter(g=>g.specialTable).length;
+  const celebCounts=CELEBRATIONS.map(c=>({label:c,count:guests.filter(g=>g.celebration===c).length}));
+  const filteredActive=activeGuests.filter(g=>
+    (filterCelebration==="All"||g.celebration===filterCelebration)&&
+    (filterStatus==="All"||g.status===filterStatus)
+  );
+
+  const S={
+    app:{fontFamily:"'Inter',sans-serif",background:C.pageBg,minHeight:"100vh",color:C.textDark,maxWidth:480,margin:"0 auto",position:"relative",paddingBottom:88},
+    header:{background:C.navy,padding:"18px 20px 14px",position:"sticky",top:0,zIndex:10,borderBottom:`3px solid ${C.gold}`},
+    hRow:{display:"flex",justifyContent:"space-between",alignItems:"flex-start"},
+    hTitle:{fontSize:23,fontWeight:700,color:C.white,lineHeight:1.1,fontFamily:"'Playfair Display',serif"},
+    hSub:{fontSize:9,color:"rgba(255,255,255,0.3)",marginTop:6,letterSpacing:"0.05em"},
+    syncBtn:{background:"rgba(217,191,97,0.18)",border:`1px solid ${C.gold}`,color:C.gold,padding:"7px 12px",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:5,flexShrink:0},
+    nav:{display:"flex",background:C.navyDark,borderBottom:`2px solid ${C.gold}`,position:"sticky",top:83,zIndex:9},
+    navBtn:(a)=>({flex:1,padding:"11px 4px",background:"none",border:"none",color:a?C.gold:"rgba(255,255,255,0.45)",fontSize:11,fontWeight:a?700:500,cursor:"pointer",letterSpacing:"0.05em",textTransform:"uppercase",borderBottom:a?`3px solid ${C.gold}`:"3px solid transparent"}),
+    section:{padding:"16px"},
+    card:{background:C.cardBg,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",marginBottom:10,cursor:"pointer",boxShadow:"0 1px 4px rgba(0,0,0,0.06)"},
+    gName:{fontSize:15,fontWeight:700,color:C.textDark,marginBottom:1},
+    roomBadge:{background:C.navy,color:C.gold,fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:20},
+    sBadge:(s)=>({display:"inline-flex",alignItems:"center",fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:20,background:s==="Done"?C.greenBg:C.redBg,color:s==="Done"?C.green:C.red,border:`1px solid ${s==="Done"?C.greenBorder:C.redBorder}`}),
+    poolBadge:{display:"inline-flex",alignItems:"center",fontSize:10,background:C.amberBg,color:C.amber,padding:"3px 9px",borderRadius:20,fontWeight:700,border:`1px solid ${C.amberBorder}`},
+    specialBadge:{display:"inline-flex",alignItems:"center",fontSize:10,background:"#E8EFFB",color:"#2B5CA8",padding:"3px 9px",borderRadius:20,fontWeight:700,border:"1px solid #B8CDEF"},
+    restBadge:{display:"inline-flex",alignItems:"center",fontSize:10,background:C.purpleBg,color:C.purple,padding:"3px 9px",borderRadius:20,fontWeight:700,border:`1px solid ${C.purpleBorder}`},
+    fRow:{display:"flex",gap:7,marginBottom:12,overflowX:"auto",paddingBottom:4},
+    fBtn:(a)=>({background:a?C.navy:C.white,border:`1px solid ${a?C.navy:C.border}`,color:a?C.gold:C.textMid,padding:"6px 13px",borderRadius:20,fontSize:11,fontWeight:a?700:500,cursor:"pointer",whiteSpace:"nowrap"}),
+    statGrid:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16},
+    statCard:(bg,border)=>({background:bg,border:`1px solid ${border}`,borderRadius:12,padding:"16px",boxShadow:"0 1px 3px rgba(0,0,0,0.05)"}),
+    statNum:{fontSize:30,fontWeight:800,lineHeight:1},
+    statLbl:{fontSize:11,opacity:0.7,marginTop:4,letterSpacing:"0.04em",fontWeight:600},
+    input:{width:"100%",background:C.white,border:`1px solid ${C.border}`,borderRadius:8,padding:"11px 13px",color:C.textDark,fontSize:14,outline:"none",boxSizing:"border-box"},
+    label:{fontSize:11,color:C.navy,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:5,display:"block"},
+    fg:{marginBottom:14},
+    btn:(v)=>({padding:"12px 20px",borderRadius:8,border:"none",fontSize:13,fontWeight:700,cursor:"pointer",letterSpacing:"0.04em",...(v==="primary"?{background:`linear-gradient(135deg,${C.gold},${C.goldDark})`,color:C.navy}:{background:C.white,color:C.textDark,border:`1px solid ${C.border}`})}),
+    modal:{position:"fixed",inset:0,background:C.ivory,zIndex:50,overflowY:"auto",paddingBottom:40},
+    mHead:{background:C.navy,padding:"18px 16px 14px",borderBottom:`3px solid ${C.gold}`,display:"flex",alignItems:"center",gap:12},
+    backBtn:{background:"rgba(255,255,255,0.12)",border:"1px solid rgba(255,255,255,0.25)",color:C.white,padding:"8px 13px",borderRadius:8,fontSize:13,cursor:"pointer",fontWeight:600},
+    divider:{height:1,background:C.border,margin:"16px 0"},
+    toggle:(on)=>({width:42,height:24,borderRadius:12,background:on?C.navy:"#DDD",cursor:"pointer",position:"relative",transition:"all 0.2s",flexShrink:0,border:`2px solid ${on?C.gold:"#CCC"}`}),
+    tDot:(on)=>({position:"absolute",top:2,left:on?18:2,width:16,height:16,borderRadius:"50%",background:on?C.gold:C.white,transition:"all 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.2)"}),
+    fab:{position:"fixed",bottom:24,right:20,background:`linear-gradient(135deg,${C.gold},${C.goldDark})`,color:C.navy,border:"none",width:56,height:56,borderRadius:"50%",fontSize:26,cursor:"pointer",fontWeight:700,boxShadow:`0 4px 20px rgba(217,191,97,0.5)`,zIndex:20,display:"flex",alignItems:"center",justifyContent:"center"},
+    toast:(t)=>({position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",background:t==="success"?C.navy:"#5C1A1A",border:`2px solid ${t==="success"?C.gold:C.red}`,color:t==="success"?C.gold:"#FFAAAA",padding:"10px 22px",borderRadius:24,fontSize:13,fontWeight:700,zIndex:100,whiteSpace:"nowrap",boxShadow:"0 4px 24px rgba(0,0,0,0.2)"}),
+    dRange:{fontSize:11,color:C.textSoft,marginTop:2},
+    empty:{textAlign:"center",padding:"48px 24px",color:C.textSoft},
+    syncBar:{position:"fixed",bottom:16,left:"50%",transform:"translateX(-50%)",background:C.navy,border:`1px solid ${C.gold}`,color:C.gold,padding:"8px 18px",borderRadius:20,fontSize:12,fontWeight:700,zIndex:99},
+    sHd:(col)=>({fontSize:11,fontWeight:700,color:col||C.navy,letterSpacing:"0.09em",textTransform:"uppercase",marginBottom:10}),
+    listCard:{background:C.white,borderRadius:12,border:`1px solid ${C.border}`,overflow:"hidden",marginBottom:16,boxShadow:"0 1px 4px rgba(0,0,0,0.05)"},
+    listRow:(i)=>({padding:"12px 16px",borderTop:i>0?`1px solid ${C.border}`:"none",display:"flex",justifyContent:"space-between",alignItems:"center"}),
+    bar:{height:5,background:"#EEE",borderRadius:3,overflow:"hidden",marginTop:6},
+    barFill:(pct)=>({width:`${pct}%`,height:"100%",background:`linear-gradient(90deg,${C.gold},${C.goldDark})`,borderRadius:3}),
+    infoBox:{background:`linear-gradient(135deg,${C.navy},${C.navyLight})`,borderRadius:10,padding:14,marginBottom:16,border:`1px solid ${C.gold}`},
+    sLabel:{fontSize:10,color:C.gold,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",marginBottom:3},
+    sVal:{fontSize:14,fontWeight:700,color:C.white},
+  };
+
+  if(loading) return(
+    <div style={{...S.app,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,background:C.navy}}>
+      <div style={{fontSize:11,color:C.gold,letterSpacing:"0.2em",textTransform:"uppercase",marginBottom:6}}>The Oberoi Rajvilās</div>
+      <div style={{fontSize:30,fontFamily:"'Playfair Display',serif",color:C.white}}>Celebration Tracker</div>
+      <div style={{width:40,height:3,background:C.gold,borderRadius:2,marginTop:4}}/>
+      <div style={{fontSize:12,color:"rgba(255,255,255,0.4)",letterSpacing:"0.08em",marginTop:8}}>LOADING…</div>
+    </div>
+  );
+
+  // Detail modal
+  if(selectedGuest){
+    const g=selectedGuest;
+    const active=isActive(g);
+    return(
+      <div style={S.modal}>
+        {toast&&<div style={S.toast(toast.type)}>{toast.msg}</div>}
+        {syncing&&<div style={S.syncBar}>⟳ Saving…</div>}
+        <div style={S.mHead}>
+          <button style={S.backBtn} onClick={()=>setSelectedGuest(null)}>← Back</button>
+          <div style={{flex:1}}>
+            <div style={{fontSize:17,fontWeight:700,fontFamily:"'Playfair Display',serif",color:C.white}}>{g.name}</div>
+            <div style={{fontSize:12,color:"rgba(255,255,255,0.55)",marginTop:2}}>Room {g.room} · {g.celebration}</div>
+          </div>
+          <span style={S.sBadge(g.status)}><GoldDot color={g.status==="Done"?C.green:C.red}/>{g.status}</span>
+        </div>
+        <div style={{padding:16}}>
+          <div style={S.infoBox}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+              {[["Check-In",g.checkIn],["Check-Out",g.checkOut]].map(([k,v])=>(
+                <div key={k}><div style={S.sLabel}>{k}</div><div style={S.sVal}>{v}</div></div>
+              ))}
+            </div>
+            {!active&&<div style={{marginTop:12,paddingTop:12,borderTop:"1px solid rgba(217,191,97,0.3)",fontSize:12,color:"rgba(217,191,97,0.8)"}}>⚠ Guest has checked out</div>}
+          </div>
+          <div style={S.fg}>
+            <label style={S.label}>Update Status</label>
+            <div style={{display:"flex",gap:8}}>
+              {["Pending","Done"].map(s=>(
+                <button key={s} onClick={()=>updateStatus(g.id,s)} style={{...S.btn(s===g.status?"primary":"outline"),flex:1}}>{s==="Done"?"✓ ":""}{s}</button>
+              ))}
+            </div>
+          </div>
+          <div style={S.divider}/>
+          <div style={{marginBottom:16}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+              <label style={{...S.label,marginBottom:0}}>🍽️ Restaurant Celebration</label>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:12,color:C.textSoft}}>Planned</span>
+                <div style={S.toggle(g.restaurantCelebration)} onClick={()=>updateGuest(g.id,{restaurantCelebration:!g.restaurantCelebration})}>
+                  <div style={S.tDot(g.restaurantCelebration)}/>
+                </div>
+              </div>
+            </div>
+            {g.restaurantCelebration&&(
+              <div style={{background:C.purpleBg,border:`1px solid ${C.purpleBorder}`,borderRadius:10,padding:14}}>
+                <label style={{...S.label,color:"#5B3FAE"}}>Restaurant Notes</label>
+                <textarea style={{...S.input,minHeight:68,resize:"vertical"}} placeholder="Table preference, setup details…" value={g.restaurantNotes||""}
+                  onChange={e=>{const v=e.target.value;setSelectedGuest(p=>({...p,restaurantNotes:v}));setGuests(gs=>gs.map(x=>x.id===g.id?{...x,restaurantNotes:v}:x));updateGuest(g.id,{restaurantNotes:v});}}/>
+              </div>
+            )}
+          </div>
+          <div style={S.divider}/>
+          <div style={{marginBottom:16}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+              <label style={{...S.label,marginBottom:0,color:C.amber}}>🌊 Poolside Dinner</label>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:12,color:C.textSoft}}>Planned</span>
+                <div style={S.toggle(g.poolsideDinner)} onClick={()=>updateGuest(g.id,{poolsideDinner:!g.poolsideDinner})}>
+                  <div style={S.tDot(g.poolsideDinner)}/>
+                </div>
+              </div>
+            </div>
+            {g.poolsideDinner&&(
+              <div style={{background:C.amberBg,border:`1px solid ${C.amberBorder}`,borderRadius:10,padding:14}}>
+                <label style={{...S.label,color:C.amber}}>Poolside Dinner Notes</label>
+                <textarea style={{...S.input,minHeight:68,resize:"vertical"}} placeholder="Timing, menu, setup details…" value={g.poolsideDinnerNotes||""}
+                  onChange={e=>{const v=e.target.value;setSelectedGuest(p=>({...p,poolsideDinnerNotes:v}));setGuests(gs=>gs.map(x=>x.id===g.id?{...x,poolsideDinnerNotes:v}:x));updateGuest(g.id,{poolsideDinnerNotes:v});}}/>
+              </div>
+            )}
+          </div>
+          <div style={S.divider}/>
+          <div style={{marginBottom:16}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+              <label style={{...S.label,marginBottom:0,color:"#2B5CA8"}}>⭐ Special Table</label>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:12,color:C.textSoft}}>Planned</span>
+                <div style={S.toggle(g.specialTable)} onClick={()=>updateGuest(g.id,{specialTable:!g.specialTable})}>
+                  <div style={S.tDot(g.specialTable)}/>
+                </div>
+              </div>
+            </div>
+            {g.specialTable&&(
+              <div style={{background:"#E8EFFB",border:"1px solid #B8CDEF",borderRadius:10,padding:14}}>
+                <label style={{...S.label,color:"#2B5CA8"}}>Special Table Notes</label>
+                <textarea style={{...S.input,minHeight:68,resize:"vertical"}} placeholder="Table location, decor, setup details…" value={g.specialTableNotes||""}
+                  onChange={e=>{const v=e.target.value;setSelectedGuest(p=>({...p,specialTableNotes:v}));setGuests(gs=>gs.map(x=>x.id===g.id?{...x,specialTableNotes:v}:x));updateGuest(g.id,{specialTableNotes:v});}}/>
+              </div>
+            )}
+          </div>
+          <div style={S.divider}/>
+          <div style={S.fg}>
+            <label style={S.label}>Notes & Instructions</label>
+            <textarea style={{...S.input,minHeight:84,resize:"vertical"}} value={g.notes}
+              onChange={e=>{const v=e.target.value;setSelectedGuest(p=>({...p,notes:v}));setGuests(gs=>gs.map(x=>x.id===g.id?{...x,notes:v}:x));updateGuest(g.id,{notes:v});}}/>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Add Guest modal
+  if(showAddForm){
+    return(
+      <div style={S.modal}>
+        {toast&&<div style={S.toast(toast.type)}>{toast.msg}</div>}
+        {syncing&&<div style={S.syncBar}>⟳ Saving…</div>}
+        <div style={S.mHead}>
+          <button style={S.backBtn} onClick={()=>setShowAddForm(false)}>← Cancel</button>
+          <div style={{flex:1,fontSize:17,fontWeight:700,fontFamily:"'Playfair Display',serif",color:C.white}}>New Celebration</div>
+          <button style={{...S.btn("primary"),opacity:syncing?0.5:1}} onClick={addGuest} disabled={syncing}>Save</button>
+        </div>
+        <div style={{padding:16}}>
+          {[["Guest Name","name","text","e.g. Mr. & Mrs. Gupta"],["Room Number","room","text","e.g. 204"]].map(([l,k,t,ph])=>(
+            <div key={k} style={S.fg}>
+              <label style={S.label}>{l}</label>
+              <input style={S.input} type={t} placeholder={ph} value={newGuest[k]} onChange={e=>setNewGuest(g=>({...g,[k]:e.target.value}))}/>
+            </div>
+          ))}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+            {[["Check-In","checkIn"],["Check-Out","checkOut"]].map(([l,k])=>(
+              <div key={k}>
+                <label style={S.label}>{l}</label>
+                <input style={S.input} type="date" value={newGuest[k]} onChange={e=>setNewGuest(g=>({...g,[k]:e.target.value}))}/>
+              </div>
+            ))}
+          </div>
+          <div style={S.fg}>
+            <label style={S.label}>Celebration Type</label>
+            <select style={S.input} value={newGuest.celebration} onChange={e=>setNewGuest(g=>({...g,celebration:e.target.value}))}>
+              {CELEBRATIONS.map(c=><option key={c}>{c}</option>)}
+            </select>
+          </div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,background:C.purpleBg,border:`1px solid ${C.purpleBorder}`,borderRadius:10,padding:"12px 14px"}}>
+            <label style={{...S.label,marginBottom:0,color:"#5B3FAE"}}>🍽️ Restaurant Celebration Planned</label>
+            <div style={S.toggle(newGuest.restaurantCelebration)} onClick={()=>setNewGuest(g=>({...g,restaurantCelebration:!g.restaurantCelebration}))}>
+              <div style={S.tDot(newGuest.restaurantCelebration)}/>
+            </div>
+          </div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,background:C.amberBg,border:`1px solid ${C.amberBorder}`,borderRadius:10,padding:"12px 14px"}}>
+            <label style={{...S.label,marginBottom:0,color:C.amber}}>🌊 Poolside Dinner Planned</label>
+            <div style={S.toggle(newGuest.poolsideDinner)} onClick={()=>setNewGuest(g=>({...g,poolsideDinner:!g.poolsideDinner}))}>
+              <div style={S.tDot(newGuest.poolsideDinner)}/>
+            </div>
+          </div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,background:"#E8EFFB",border:"1px solid #B8CDEF",borderRadius:10,padding:"12px 14px"}}>
+            <label style={{...S.label,marginBottom:0,color:"#2B5CA8"}}>⭐ Special Table Planned</label>
+            <div style={S.toggle(newGuest.specialTable)} onClick={()=>setNewGuest(g=>({...g,specialTable:!g.specialTable}))}>
+              <div style={S.tDot(newGuest.specialTable)}/>
+            </div>
+          </div>
+          <div style={S.fg}>
+            <label style={S.label}>Notes</label>
+            <textarea style={{...S.input,minHeight:84,resize:"vertical"}} placeholder="Special instructions…" value={newGuest.notes} onChange={e=>setNewGuest(g=>({...g,notes:e.target.value}))}/>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Main views
+  return(
+    <div style={S.app}>
+      {toast&&<div style={S.toast(toast.type)}>{toast.msg}</div>}
+      {syncing&&<div style={S.syncBar}>⟳ Syncing…</div>}
+      <div style={S.header}>
+        <div style={S.hRow}>
+          <div>
+            <div style={{fontSize:10,color:C.gold,letterSpacing:"0.15em",textTransform:"uppercase",marginBottom:2}}>The Oberoi Rajvilās</div>
+            <div style={S.hTitle}>Celebration Tracker</div>
+            <div style={S.hSub}>Developer: Chirag</div>
+          </div>
+          <button style={S.syncBtn} onClick={refresh} disabled={syncing}>⟳ Sync</button>
+        </div>
+      </div>
+      <div style={S.nav}>
+        {[["dashboard","Dashboard"],["active","Active"],["analytics","Analytics"]].map(([v,l])=>(
+          <button key={v} style={S.navBtn(view===v)} onClick={()=>setView(v)}>{l}</button>
+        ))}
+      </div>
+
+      {view==="dashboard"&&(
+        <div style={S.section}>
+          <div style={{fontSize:11,color:C.textSoft,marginBottom:14}}>{new Date().toDateString()}</div>
+          <div style={S.statGrid}>
+            <div style={S.statCard(C.navy,C.gold)}><div style={{...S.statNum,color:C.gold}}>{activeGuests.length}</div><div style={{...S.statLbl,color:"rgba(255,255,255,0.7)"}}>In-House</div></div>
+            <div style={S.statCard(C.redBg,C.redBorder)}><div style={{...S.statNum,color:C.red}}>{pending.length}</div><div style={{...S.statLbl,color:C.red}}>Pending</div></div>
+            <div style={S.statCard(C.greenBg,C.greenBorder)}><div style={{...S.statNum,color:C.green}}>{done.length}</div><div style={{...S.statLbl,color:C.green}}>Completed</div></div>
+            <div style={S.statCard(C.amberBg,C.amberBorder)}><div style={{...S.statNum,color:C.amber}}>{poolsideCount}</div><div style={{...S.statLbl,color:C.amber}}>Poolside Dinners</div></div>
+          </div>
+          <div style={S.sHd(C.red)}>⚠ Pending Actions</div>
+          {pending.length===0?(
+            <div style={{background:C.greenBg,border:`1px solid ${C.greenBorder}`,borderRadius:12,padding:"20px 24px",textAlign:"center",marginBottom:16}}>
+              <div style={{fontSize:24,marginBottom:6}}>✓</div>
+              <div style={{fontSize:14,fontWeight:700,color:C.green}}>All celebrations handled</div>
+            </div>
+          ):pending.map(g=>(
+            <div key={g.id} style={S.card} onClick={()=>setSelectedGuest(g)}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                <div><div style={S.gName}>{g.name}</div><div style={S.dRange}>Check-out: {g.checkOut}</div></div>
+                <span style={S.roomBadge}>Rm {g.room}</span>
+              </div>
+              <div style={{display:"flex",alignItems:"center",flexWrap:"wrap",gap:6}}>
+                <span style={S.sBadge("Pending")}><GoldDot color={C.red}/>Pending</span>
+                <span style={{fontSize:11,color:C.textSoft,background:"#F3F0E8",padding:"2px 8px",borderRadius:12}}>{g.celebration}</span>
+                {g.restaurantCelebration&&<span style={S.restBadge}>🍽️ Restaurant</span>}
+                {g.poolsideDinner&&<span style={S.poolBadge}>🌊 Poolside</span>}
+                {g.specialTable&&<span style={S.specialBadge}>⭐ Special Table</span>}
+              </div>
+            </div>
+          ))}
+          {done.length>0&&(
+            <>
+              <div style={{...S.sHd(C.green),marginTop:18}}>✓ Recently Completed</div>
+              {done.slice(-3).reverse().map(g=>(
+                <div key={g.id} style={{...S.card,opacity:0.8}} onClick={()=>setSelectedGuest(g)}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                    <div><div style={S.gName}>{g.name}</div><div style={{fontSize:12,color:C.textSoft,marginTop:2}}>{g.celebration}</div></div>
+                    <div style={{textAlign:"right"}}>
+                      <span style={S.sBadge("Done")}><GoldDot color={C.green}/>Done</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+
+      {view==="active"&&(
+        <div style={S.section}>
+          <div style={{fontSize:11,marginBottom:12,background:C.greenBg,border:`1px solid ${C.greenBorder}`,borderRadius:8,padding:"8px 12px",fontWeight:600,color:C.green}}>
+            ✓ {filteredActive.length} in-house guest{filteredActive.length!==1?"s":""} · Departed guests auto-removed
+          </div>
+          <div style={S.fRow}>
+            {["All",...CELEBRATIONS].map(c=>(
+              <button key={c} style={S.fBtn(filterCelebration===c)} onClick={()=>setFilterCelebration(c)}>{c}</button>
+            ))}
+          </div>
+          <div style={S.fRow}>
+            {["All","Pending","Done"].map(s=>(
+              <button key={s} style={S.fBtn(filterStatus===s)} onClick={()=>setFilterStatus(s)}>{s}</button>
+            ))}
+          </div>
+          {filteredActive.length===0?(
+            <div style={S.empty}><div style={{fontSize:32,marginBottom:10}}>🎉</div><div style={{fontSize:14,fontWeight:600}}>No guests match filters</div></div>
+          ):filteredActive.map(g=>(
+            <div key={g.id} style={S.card} onClick={()=>setSelectedGuest(g)}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                <div style={{flex:1}}><div style={S.gName}>{g.name}</div><div style={S.dRange}>{g.checkIn} → {g.checkOut}</div></div>
+                <span style={S.roomBadge}>Rm {g.room}</span>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                <span style={S.sBadge(g.status)}><GoldDot color={g.status==="Done"?C.green:C.red}/>{g.status}</span>
+                <span style={{fontSize:11,background:"#F3F0E8",padding:"2px 8px",borderRadius:12,color:C.textMid,fontWeight:600}}>{g.celebration}</span>
+                {g.restaurantCelebration&&<span style={S.restBadge}>🍽️</span>}
+                {g.poolsideDinner&&<span style={S.poolBadge}>🌊</span>}
+                {g.specialTable&&<span style={S.specialBadge}>⭐</span>}
+              </div>
+              {g.notes&&<div style={{fontSize:11,color:C.textSoft,marginTop:8,fontStyle:"italic",borderTop:`1px solid ${C.border}`,paddingTop:8}}>{g.notes.substring(0,80)}{g.notes.length>80?"…":""}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {view==="analytics"&&(
+        <div style={S.section}>
+          <div style={S.sHd()}>Operational Overview</div>
+          <div style={S.statGrid}>
+            <div style={S.statCard(C.greenBg,C.greenBorder)}><div style={{...S.statNum,color:C.green}}>{guests.length>0?Math.round(done.length/guests.length*100):0}%</div><div style={{...S.statLbl,color:C.green}}>Completion Rate</div></div>
+            <div style={S.statCard(`linear-gradient(135deg,${C.navy},${C.navyLight})`,C.gold)}><div style={{...S.statNum,color:C.gold}}>{guests.length}</div><div style={{...S.statLbl,color:"rgba(255,255,255,0.7)"}}>Total Guests</div></div>
+            <div style={S.statCard(C.amberBg,C.amberBorder)}><div style={{...S.statNum,color:C.amber}}>{poolsideCount}</div><div style={{...S.statLbl,color:C.amber}}>Poolside Dinners</div></div>
+            <div style={S.statCard("#E8EFFB","#B8CDEF")}><div style={{...S.statNum,color:"#2B5CA8"}}>{specialTableCount}</div><div style={{...S.statLbl,color:"#2B5CA8"}}>Special Tables</div></div>
+          </div>
+          <div style={S.sHd()}>By Celebration Type</div>
+          <div style={S.listCard}>
+            {celebCounts.filter(c=>c.count>0).map((c,i)=>{
+              const pct=guests.length>0?Math.round(c.count/guests.length*100):0;
+              return(
+                <div key={c.label} style={S.listRow(i)}>
+                  <div style={{flex:1}}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                      <span style={{fontSize:13,fontWeight:600}}>{c.label}</span>
+                      <span style={{fontSize:13,color:C.navy,fontWeight:700}}>{c.count}</span>
+                    </div>
+                    <div style={S.bar}><div style={S.barFill(pct)}/></div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{background:C.navy,borderRadius:12,padding:16,border:`1px solid ${C.gold}`,marginTop:4}}>
+            <div style={{fontSize:11,color:C.gold,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:8}}>📧 Daily Report</div>
+            <div style={{fontSize:12,color:"rgba(255,255,255,0.7)",lineHeight:1.6}}>
+              A summary is automatically emailed every day at <strong style={{color:C.gold}}>3:00 AM</strong> via Google Apps Script.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {view!=="analytics"&&(
+        <button style={S.fab} onClick={()=>setShowAddForm(true)}>+</button>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
